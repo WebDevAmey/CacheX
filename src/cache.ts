@@ -1,27 +1,105 @@
+type CacheEntry = {
+    value: unknown;
+    expiresAt: number | null;
+};
+
 export class CacheEngine {
-    private store = new Map<string, unknown>();
+    private store = new Map<string, CacheEntry>();
 
-    set(key: string, value: unknown): void {
-        this.store.set(key, value);
+    set(key: string, value: unknown, ttl?: number) {
+        const expiresAt = ttl
+            ? Date.now() + ttl * 1000
+            : null;
+
+        this.store.set(key, {
+            value,
+            expiresAt
+        });
     }
 
-    get(key: string): unknown {
-        return this.store.get(key);
+    get(key: string) {
+        const entry = this.store.get(key);
+
+        if (!entry) {
+            return undefined;
+        }
+
+        if (this.isExpired(entry)) {
+            this.store.delete(key);
+            return undefined;
+        }
+
+        return entry.value;
     }
 
-    delete(key: string): boolean {
+    delete(key: string) {
         return this.store.delete(key);
     }
 
-    exists(key: string): boolean {
-        return this.store.has(key);
+    exists(key: string) {
+        return this.get(key) !== undefined;
     }
 
-    keys(): string[] {
-        return [...this.store.keys()];
+    ttl(key: string) {
+        const entry = this.store.get(key);
+
+        if (!entry) {
+            return -2;
+        }
+
+        if (this.isExpired(entry)) {
+            this.store.delete(key);
+            return -2;
+        }
+
+        if (entry.expiresAt === null) {
+            return -1;
+        }
+
+        return Math.max(
+            0,
+            Math.ceil((entry.expiresAt - Date.now()) / 1000)
+        );
     }
 
-    clear(): void {
+    expire(key: string, seconds: number) {
+        const entry = this.store.get(key);
+
+        if (!entry || this.isExpired(entry)) {
+            return false;
+        }
+
+        entry.expiresAt = Date.now() + seconds * 1000;
+
+        return true;
+    }
+
+    persist(key: string) {
+        const entry = this.store.get(key);
+
+        if (!entry || this.isExpired(entry)) {
+            return false;
+        }
+
+        entry.expiresAt = null;
+
+        return true;
+    }
+
+    keys() {
+        return [...this.store.keys()].filter(
+            key => this.get(key) !== undefined
+        );
+    }
+
+    clear() {
         this.store.clear();
+    }
+
+    private isExpired(entry: CacheEntry) {
+        return (
+            entry.expiresAt !== null &&
+            entry.expiresAt <= Date.now()
+        );
     }
 }
