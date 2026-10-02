@@ -7,9 +7,10 @@ export class CacheEngine {
     private store = new Map<string, CacheEntry>();
 
     set(key: string, value: unknown, ttl?: number) {
-        const expiresAt = ttl
-            ? Date.now() + ttl * 1000
-            : null;
+        const expiresAt =
+            ttl !== undefined
+                ? Date.now() + ttl * 1000
+                : null;
 
         this.store.set(key, {
             value,
@@ -40,6 +41,22 @@ export class CacheEngine {
         return this.get(key) !== undefined;
     }
 
+    keys() {
+        const keys: string[] = [];
+
+        for (const key of this.store.keys()) {
+            if (this.get(key) !== undefined) {
+                keys.push(key);
+            }
+        }
+
+        return keys;
+    }
+
+    clear() {
+        this.store.clear();
+    }
+
     ttl(key: string) {
         const entry = this.store.get(key);
 
@@ -58,7 +75,9 @@ export class CacheEngine {
 
         return Math.max(
             0,
-            Math.ceil((entry.expiresAt - Date.now()) / 1000)
+            Math.ceil(
+                (entry.expiresAt - Date.now()) / 1000
+            )
         );
     }
 
@@ -69,7 +88,8 @@ export class CacheEngine {
             return false;
         }
 
-        entry.expiresAt = Date.now() + seconds * 1000;
+        entry.expiresAt =
+            Date.now() + seconds * 1000;
 
         return true;
     }
@@ -86,14 +106,17 @@ export class CacheEngine {
         return true;
     }
 
-    keys() {
-        return [...this.store.keys()].filter(
-            key => this.get(key) !== undefined
-        );
-    }
+    cleanupExpired() {
+        let removed = 0;
 
-    clear() {
-        this.store.clear();
+        for (const [key, entry] of this.store) {
+            if (this.isExpired(entry)) {
+                this.store.delete(key);
+                removed++;
+            }
+        }
+
+        return removed;
     }
 
     private isExpired(entry: CacheEntry) {

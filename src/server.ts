@@ -4,9 +4,10 @@ import { CacheEngine } from "./cache.js";
 const app = express();
 const cache = new CacheEngine();
 
+const PORT = 3000;
+
 app.use(express.json());
 
-// Health check
 app.get("/", (_req, res) => {
     res.json({
         name: "CacheX",
@@ -14,7 +15,6 @@ app.get("/", (_req, res) => {
     });
 });
 
-// SET
 app.post("/set", (req, res) => {
     const { key, value, ttl } = req.body;
 
@@ -24,9 +24,12 @@ app.post("/set", (req, res) => {
         });
     }
 
-    if (ttl !== undefined && typeof ttl !== "number") {
+    if (
+        ttl !== undefined &&
+        (typeof ttl !== "number" || ttl <= 0)
+    ) {
         return res.status(400).json({
-            error: "ttl must be a number"
+            error: "ttl must be a positive number"
         });
     }
 
@@ -40,7 +43,6 @@ app.post("/set", (req, res) => {
     });
 });
 
-// GET
 app.get("/get/:key", (req, res) => {
     const value = cache.get(req.params.key);
 
@@ -56,7 +58,6 @@ app.get("/get/:key", (req, res) => {
     });
 });
 
-// DELETE
 app.delete("/delete/:key", (req, res) => {
     const deleted = cache.delete(req.params.key);
 
@@ -65,21 +66,18 @@ app.delete("/delete/:key", (req, res) => {
     });
 });
 
-// EXISTS
 app.get("/exists/:key", (req, res) => {
     res.json({
         exists: cache.exists(req.params.key)
     });
 });
 
-// KEYS
 app.get("/keys", (_req, res) => {
     res.json({
         keys: cache.keys()
     });
 });
 
-// CLEAR
 app.delete("/clear", (_req, res) => {
     cache.clear();
 
@@ -88,7 +86,6 @@ app.delete("/clear", (_req, res) => {
     });
 });
 
-// TTL
 app.get("/ttl/:key", (req, res) => {
     const ttl = cache.ttl(req.params.key);
 
@@ -98,13 +95,15 @@ app.get("/ttl/:key", (req, res) => {
     });
 });
 
-// EXPIRE
 app.post("/expire/:key", (req, res) => {
     const { seconds } = req.body;
 
-    if (typeof seconds !== "number") {
+    if (
+        typeof seconds !== "number" ||
+        seconds <= 0
+    ) {
         return res.status(400).json({
-            error: "seconds must be a number"
+            error: "seconds must be a positive number"
         });
     }
 
@@ -113,22 +112,54 @@ app.post("/expire/:key", (req, res) => {
         seconds
     );
 
+    if (!success) {
+        return res.status(404).json({
+            error: "Key not found"
+        });
+    }
+
     res.json({
-        success
+        success: true
     });
 });
 
-// PERSIST
 app.post("/persist/:key", (req, res) => {
     const success = cache.persist(req.params.key);
 
+    if (!success) {
+        return res.status(404).json({
+            error: "Key not found"
+        });
+    }
+
     res.json({
-        success
+        success: true
     });
 });
 
-// Start server
-app.listen(3000, () => {
-    console.log("CacheX running on http://localhost:3000");
-});
+const expirationWorker = setInterval(() => {
+    const removed = cache.cleanupExpired();
 
+    if (removed > 0) {
+        console.log(
+            `Expiration cleanup: removed ${removed} keys`
+        );
+    }
+}, 1000);
+
+const shutdown = () => {
+    console.log("\nShutting down CacheX...");
+
+    clearInterval(expirationWorker);
+
+    process.exit(0);
+};
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+
+app.listen(PORT, () => {
+    console.log(
+        `CacheX running on http://localhost:${PORT}`
+    );
+});
