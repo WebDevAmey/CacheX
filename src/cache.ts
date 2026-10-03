@@ -5,11 +5,24 @@ type CacheEntry = {
 
 export class CacheEngine {
     private store = new Map<string, CacheEntry>();
-    private evictionCount = 0;
+
+    private stats = {
+        hits: 0,
+        misses: 0,
+        sets: 0,
+        gets: 0,
+        deletes: 0,
+        evictions: 0,
+        expirations: 0
+    };
+
+    private startedAt = Date.now();
 
     constructor(private maxKeys = 1000) {}
 
     set(key: string, value: unknown, ttl?: number) {
+        this.stats.sets++;
+
         const expiresAt =
             ttl !== undefined
                 ? Date.now() + ttl * 1000
@@ -24,7 +37,7 @@ export class CacheEngine {
 
             if (oldestKey) {
                 this.store.delete(oldestKey);
-                this.evictionCount++;
+                this.stats.evictions++;
             }
         }
 
@@ -35,16 +48,23 @@ export class CacheEngine {
     }
 
     get(key: string) {
+        this.stats.gets++;
+
         const entry = this.store.get(key);
 
         if (!entry) {
+            this.stats.misses++;
             return undefined;
         }
 
         if (this.isExpired(entry)) {
             this.store.delete(key);
+            this.stats.misses++;
+            this.stats.expirations++;
             return undefined;
         }
+
+        this.stats.hits++;
 
         this.store.delete(key);
         this.store.set(key, entry);
@@ -53,7 +73,13 @@ export class CacheEngine {
     }
 
     delete(key: string) {
-        return this.store.delete(key);
+        const deleted = this.store.delete(key);
+
+        if (deleted) {
+            this.stats.deletes++;
+        }
+
+        return deleted;
     }
 
     exists(key: string) {
@@ -65,6 +91,7 @@ export class CacheEngine {
 
         if (this.isExpired(entry)) {
             this.store.delete(key);
+            this.stats.expirations++;
             return false;
         }
 
@@ -96,6 +123,7 @@ export class CacheEngine {
 
         if (this.isExpired(entry)) {
             this.store.delete(key);
+            this.stats.expirations++;
             return -2;
         }
 
@@ -142,6 +170,7 @@ export class CacheEngine {
         for (const [key, entry] of this.store) {
             if (this.isExpired(entry)) {
                 this.store.delete(key);
+                this.stats.expirations++;
                 removed++;
             }
         }
@@ -149,8 +178,29 @@ export class CacheEngine {
         return removed;
     }
 
-    getEvictionCount() {
-        return this.evictionCount;
+    getStats() {
+        const totalRequests =
+            this.stats.hits + this.stats.misses;
+
+        const hitRate =
+            totalRequests === 0
+                ? 0
+                : (this.stats.hits / totalRequests) * 100;
+
+        return {
+            keys: this.store.size,
+            hits: this.stats.hits,
+            misses: this.stats.misses,
+            hitRate: Number(hitRate.toFixed(2)),
+            sets: this.stats.sets,
+            gets: this.stats.gets,
+            deletes: this.stats.deletes,
+            evictions: this.stats.evictions,
+            expirations: this.stats.expirations,
+            uptime: Math.floor(
+                (Date.now() - this.startedAt) / 1000
+            )
+        };
     }
 
     private isExpired(entry: CacheEntry) {

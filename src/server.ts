@@ -2,7 +2,7 @@ import express from "express";
 import { CacheEngine } from "./cache.js";
 
 const app = express();
-const cache = new CacheEngine(3);
+const cache = new CacheEngine(1000);
 
 const PORT = 3000;
 
@@ -135,6 +135,10 @@ app.post("/persist/:key", (req, res) => {
     res.json({
         success: true
     });
+});
+
+app.get("/stats", (_req, res) => {
+    res.json(cache.getStats());
 });
 
 const expirationWorker = setInterval(() => {
