@@ -5,12 +5,28 @@ type CacheEntry = {
 
 export class CacheEngine {
     private store = new Map<string, CacheEntry>();
+    private evictionCount = 0;
+
+    constructor(private maxKeys = 1000) {}
 
     set(key: string, value: unknown, ttl?: number) {
         const expiresAt =
             ttl !== undefined
                 ? Date.now() + ttl * 1000
                 : null;
+
+        if (this.store.has(key)) {
+            this.store.delete(key);
+        }
+
+        if (this.store.size >= this.maxKeys) {
+            const oldestKey = this.store.keys().next().value;
+
+            if (oldestKey) {
+                this.store.delete(oldestKey);
+                this.evictionCount++;
+            }
+        }
 
         this.store.set(key, {
             value,
@@ -30,6 +46,9 @@ export class CacheEngine {
             return undefined;
         }
 
+        this.store.delete(key);
+        this.store.set(key, entry);
+
         return entry.value;
     }
 
@@ -38,14 +57,25 @@ export class CacheEngine {
     }
 
     exists(key: string) {
-        return this.get(key) !== undefined;
+        const entry = this.store.get(key);
+
+        if (!entry) {
+            return false;
+        }
+
+        if (this.isExpired(entry)) {
+            this.store.delete(key);
+            return false;
+        }
+
+        return true;
     }
 
     keys() {
         const keys: string[] = [];
 
         for (const key of this.store.keys()) {
-            if (this.get(key) !== undefined) {
+            if (this.exists(key)) {
                 keys.push(key);
             }
         }
@@ -117,6 +147,10 @@ export class CacheEngine {
         }
 
         return removed;
+    }
+
+    getEvictionCount() {
+        return this.evictionCount;
     }
 
     private isExpired(entry: CacheEntry) {

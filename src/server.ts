@@ -2,7 +2,7 @@ import express from "express";
 import { CacheEngine } from "./cache.js";
 
 const app = express();
-const cache = new CacheEngine();
+const cache = new CacheEngine(3);
 
 const PORT = 3000;
 
