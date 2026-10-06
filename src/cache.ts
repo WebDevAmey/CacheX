@@ -13,7 +13,9 @@ export class CacheEngine {
         gets: 0,
         deletes: 0,
         evictions: 0,
-        expirations: 0
+        expirations: 0,
+        increments: 0,
+        decrements: 0
     };
 
     private startedAt = Date.now();
@@ -164,6 +166,78 @@ export class CacheEngine {
         return true;
     }
 
+    incr(key: string) {
+        this.stats.increments++;
+
+        const entry = this.store.get(key);
+
+        if (!entry) {
+            this.store.set(key, {
+                value: 1,
+                expiresAt: null
+            });
+
+            return 1;
+        }
+
+        if (this.isExpired(entry)) {
+            this.store.delete(key);
+
+            this.store.set(key, {
+                value: 1,
+                expiresAt: null
+            });
+
+            this.stats.expirations++;
+
+            return 1;
+        }
+
+        if (typeof entry.value !== "number") {
+            throw new Error("Value is not a number");
+        }
+
+        entry.value++;
+
+        return entry.value;
+    }
+
+    decr(key: string) {
+        this.stats.decrements++;
+
+        const entry = this.store.get(key);
+
+        if (!entry) {
+            this.store.set(key, {
+                value: -1,
+                expiresAt: null
+            });
+
+            return -1;
+        }
+
+        if (this.isExpired(entry)) {
+            this.store.delete(key);
+
+            this.store.set(key, {
+                value: -1,
+                expiresAt: null
+            });
+
+            this.stats.expirations++;
+
+            return -1;
+        }
+
+        if (typeof entry.value !== "number") {
+            throw new Error("Value is not a number");
+        }
+
+        entry.value--;
+
+        return entry.value;
+    }
+
     cleanupExpired() {
         let removed = 0;
 
@@ -197,6 +271,8 @@ export class CacheEngine {
             deletes: this.stats.deletes,
             evictions: this.stats.evictions,
             expirations: this.stats.expirations,
+            increments: this.stats.increments,
+            decrements: this.stats.decrements,
             uptime: Math.floor(
                 (Date.now() - this.startedAt) / 1000
             )

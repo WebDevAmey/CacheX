@@ -137,6 +137,36 @@ app.post("/persist/:key", (req, res) => {
     });
 });
 
+app.post("/incr/:key", (req, res) => {
+    try {
+        const value = cache.incr(req.params.key);
+
+        res.json({
+            key: req.params.key,
+            value
+        });
+    } catch (error) {
+        res.status(400).json({
+            error: (error as Error).message
+        });
+    }
+});
+
+app.post("/decr/:key", (req, res) => {
+    try {
+        const value = cache.decr(req.params.key);
+
+        res.json({
+            key: req.params.key,
+            value
+        });
+    } catch (error) {
+        res.status(400).json({
+            error: (error as Error).message
+        });
+    }
+});
+
 app.get("/stats", (_req, res) => {
     res.json(cache.getStats());
 });
