@@ -10,6 +10,10 @@ type RedisValue =
     | {
           type: "list";
           value: string[];
+      }
+    | {
+          type: "set";
+          value: Set<string>;
       };
 
 type CacheEntry = {
@@ -21,6 +25,14 @@ type ListCacheEntry = {
     value: {
         type: "list";
         value: string[];
+    };
+    expiresAt: number | null;
+};
+
+type SetCacheEntry = {
+    value: {
+        type: "set";
+        value: Set<string>;
     };
     expiresAt: number | null;
 };
@@ -37,7 +49,9 @@ export class CacheEngine {
         evictions: 0,
         expirations: 0,
         increments: 0,
-        decrements: 0
+        decrements: 0,
+        setAdds: 0,
+        setRemoves: 0
     };
 
     private startedAt = Date.now();
@@ -109,8 +123,7 @@ export class CacheEngine {
 
         this.stats.hits++;
 
-        this.store.delete(key);
-        this.store.set(key, entry);
+        this.touch(key);
 
         return entry.value.value;
     }
@@ -246,8 +259,7 @@ export class CacheEngine {
 
         entry.value.value++;
 
-        this.store.delete(key);
-        this.store.set(key, entry);
+        this.touch(key);
 
         return entry.value.value;
     }
@@ -291,8 +303,7 @@ export class CacheEngine {
 
         entry.value.value--;
 
-        this.store.delete(key);
-        this.store.set(key, entry);
+        this.touch(key);
 
         return entry.value.value;
     }
@@ -303,12 +314,9 @@ export class CacheEngine {
         if (!entry) {
             const list = [...values].reverse();
 
-            this.store.set(key, {
-                value: {
-                    type: "list",
-                    value: list
-                },
-                expiresAt: null
+            this.createEntry(key, {
+                type: "list",
+                value: list
             });
 
             return list.length;
@@ -325,12 +333,9 @@ export class CacheEngine {
         const entry = this.getListEntry(key);
 
         if (!entry) {
-            this.store.set(key, {
-                value: {
-                    type: "list",
-                    value: [...values]
-                },
-                expiresAt: null
+            this.createEntry(key, {
+                type: "list",
+                value: [...values]
             });
 
             return values.length;
@@ -419,6 +424,86 @@ export class CacheEngine {
         return entry.value.value.length;
     }
 
+    sadd(key: string, members: string[]) {
+        let entry = this.getSetEntry(key);
+
+        if (!entry) {
+            this.createEntry(key, {
+                type: "set",
+                value: new Set()
+            });
+
+            entry = this.getSetEntry(key)!;
+        }
+
+        let added = 0;
+
+        for (const member of members) {
+            if (!entry.value.value.has(member)) {
+                entry.value.value.add(member);
+                added++;
+            }
+        }
+
+        this.stats.setAdds += added;
+
+        this.touch(key);
+
+        return added;
+    }
+
+    srem(key: string, members: string[]) {
+        const entry = this.getSetEntry(key);
+
+        if (!entry) {
+            return 0;
+        }
+
+        let removed = 0;
+
+        for (const member of members) {
+            if (entry.value.value.delete(member)) {
+                removed++;
+            }
+        }
+
+        this.stats.setRemoves += removed;
+
+        this.touch(key);
+
+        return removed;
+    }
+
+    sismember(key: string, member: string) {
+        const entry = this.getSetEntry(key);
+
+        if (!entry) {
+            return false;
+        }
+
+        return entry.value.value.has(member);
+    }
+
+    smembers(key: string) {
+        const entry = this.getSetEntry(key);
+
+        if (!entry) {
+            return [];
+        }
+
+        return [...entry.value.value];
+    }
+
+    scard(key: string) {
+        const entry = this.getSetEntry(key);
+
+        if (!entry) {
+            return 0;
+        }
+
+        return entry.value.value.size;
+    }
+
     cleanupExpired() {
         let removed = 0;
 
@@ -454,6 +539,8 @@ export class CacheEngine {
             expirations: this.stats.expirations,
             increments: this.stats.increments,
             decrements: this.stats.decrements,
+            setAdds: this.stats.setAdds,
+            setRemoves: this.stats.setRemoves,
             uptime: Math.floor(
                 (Date.now() - this.startedAt) / 1000
             )
@@ -478,6 +565,46 @@ export class CacheEngine {
         }
 
         return entry as ListCacheEntry;
+    }
+
+    private getSetEntry(key: string): SetCacheEntry | undefined {
+        const entry = this.store.get(key);
+
+        if (!entry) {
+            return undefined;
+        }
+
+        if (this.isExpired(entry)) {
+            this.store.delete(key);
+            this.stats.expirations++;
+            return undefined;
+        }
+
+        if (entry.value.type !== "set") {
+            throw new Error("WRONGTYPE Key is not a set");
+        }
+
+        return entry as SetCacheEntry;
+    }
+
+    private createEntry(
+        key: string,
+        value: RedisValue
+    ) {
+        if (this.store.size >= this.maxKeys) {
+            const oldestKey =
+                this.store.keys().next().value;
+
+            if (oldestKey) {
+                this.store.delete(oldestKey);
+                this.stats.evictions++;
+            }
+        }
+
+        this.store.set(key, {
+            value,
+            expiresAt: null
+        });
     }
 
     private touch(key: string) {

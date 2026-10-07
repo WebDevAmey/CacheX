@@ -315,6 +315,110 @@ app.get("/llen/:key", (req, res) => {
     }
 });
 
+app.post("/sadd/:key", (req, res) => {
+    const { members } = req.body;
+
+    if (
+        !Array.isArray(members) ||
+        members.some(member => typeof member !== "string")
+    ) {
+        return res.status(400).json({
+            error: "members must be an array of strings"
+        });
+    }
+
+    try {
+        const added = cache.sadd(
+            req.params.key,
+            members
+        );
+
+        res.json({
+            key: req.params.key,
+            added
+        });
+    } catch (error) {
+        res.status(400).json({
+            error: (error as Error).message
+        });
+    }
+});
+
+app.post("/srem/:key", (req, res) => {
+    const { members } = req.body;
+
+    if (
+        !Array.isArray(members) ||
+        members.some(member => typeof member !== "string")
+    ) {
+        return res.status(400).json({
+            error: "members must be an array of strings"
+        });
+    }
+
+    try {
+        const removed = cache.srem(
+            req.params.key,
+            members
+        );
+
+        res.json({
+            key: req.params.key,
+            removed
+        });
+    } catch (error) {
+        res.status(400).json({
+            error: (error as Error).message
+        });
+    }
+});
+
+app.get("/sismember/:key/:member", (req, res) => {
+    try {
+        const exists = cache.sismember(
+            req.params.key,
+            req.params.member
+        );
+
+        res.json({
+            member: req.params.member,
+            exists
+        });
+    } catch (error) {
+        res.status(400).json({
+            error: (error as Error).message
+        });
+    }
+});
+
+app.get("/smembers/:key", (req, res) => {
+    try {
+        const members = cache.smembers(req.params.key);
+
+        res.json({
+            members
+        });
+    } catch (error) {
+        res.status(400).json({
+            error: (error as Error).message
+        });
+    }
+});
+
+app.get("/scard/:key", (req, res) => {
+    try {
+        const size = cache.scard(req.params.key);
+
+        res.json({
+            size
+        });
+    } catch (error) {
+        res.status(400).json({
+            error: (error as Error).message
+        });
+    }
+});
+
 app.get("/stats", (_req, res) => {
     res.json(cache.getStats());
 });
