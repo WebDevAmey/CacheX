@@ -33,14 +33,20 @@ app.post("/set", (req, res) => {
         });
     }
 
-    cache.set(key, value, ttl);
+    try {
+        cache.set(key, value, ttl);
 
-    res.json({
-        message: "OK",
-        key,
-        value,
-        ttl: ttl ?? null
-    });
+        res.json({
+            message: "OK",
+            key,
+            value,
+            ttl: ttl ?? null
+        });
+    } catch (error) {
+        res.status(400).json({
+            error: (error as Error).message
+        });
+    }
 });
 
 app.get("/get/:key", (req, res) => {
@@ -159,6 +165,148 @@ app.post("/decr/:key", (req, res) => {
         res.json({
             key: req.params.key,
             value
+        });
+    } catch (error) {
+        res.status(400).json({
+            error: (error as Error).message
+        });
+    }
+});
+
+app.post("/lpush/:key", (req, res) => {
+    const { values } = req.body;
+
+    if (
+        !Array.isArray(values) ||
+        values.some(value => typeof value !== "string")
+    ) {
+        return res.status(400).json({
+            error: "values must be an array of strings"
+        });
+    }
+
+    try {
+        const length = cache.lpush(
+            req.params.key,
+            values
+        );
+
+        res.json({
+            key: req.params.key,
+            length
+        });
+    } catch (error) {
+        res.status(400).json({
+            error: (error as Error).message
+        });
+    }
+});
+
+app.post("/rpush/:key", (req, res) => {
+    const { values } = req.body;
+
+    if (
+        !Array.isArray(values) ||
+        values.some(value => typeof value !== "string")
+    ) {
+        return res.status(400).json({
+            error: "values must be an array of strings"
+        });
+    }
+
+    try {
+        const length = cache.rpush(
+            req.params.key,
+            values
+        );
+
+        res.json({
+            key: req.params.key,
+            length
+        });
+    } catch (error) {
+        res.status(400).json({
+            error: (error as Error).message
+        });
+    }
+});
+
+app.post("/lpop/:key", (req, res) => {
+    try {
+        const value = cache.lpop(req.params.key);
+
+        if (value === undefined) {
+            return res.status(404).json({
+                error: "List is empty or key not found"
+            });
+        }
+
+        res.json({
+            value
+        });
+    } catch (error) {
+        res.status(400).json({
+            error: (error as Error).message
+        });
+    }
+});
+
+app.post("/rpop/:key", (req, res) => {
+    try {
+        const value = cache.rpop(req.params.key);
+
+        if (value === undefined) {
+            return res.status(404).json({
+                error: "List is empty or key not found"
+            });
+        }
+
+        res.json({
+            value
+        });
+    } catch (error) {
+        res.status(400).json({
+            error: (error as Error).message
+        });
+    }
+});
+
+app.get("/lrange/:key", (req, res) => {
+    const start = Number(req.query.start);
+    const stop = Number(req.query.stop);
+
+    if (
+        !Number.isInteger(start) ||
+        !Number.isInteger(stop)
+    ) {
+        return res.status(400).json({
+            error: "start and stop must be integers"
+        });
+    }
+
+    try {
+        const values = cache.lrange(
+            req.params.key,
+            start,
+            stop
+        );
+
+        res.json({
+            values
+        });
+    } catch (error) {
+        res.status(400).json({
+            error: (error as Error).message
+        });
+    }
+});
+
+app.get("/llen/:key", (req, res) => {
+    try {
+        const length = cache.llen(req.params.key);
+
+        res.json({
+            length
         });
     } catch (error) {
         res.status(400).json({

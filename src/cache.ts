@@ -1,5 +1,27 @@
+type RedisValue =
+    | {
+          type: "string";
+          value: string;
+      }
+    | {
+          type: "number";
+          value: number;
+      }
+    | {
+          type: "list";
+          value: string[];
+      };
+
 type CacheEntry = {
-    value: unknown;
+    value: RedisValue;
+    expiresAt: number | null;
+};
+
+type ListCacheEntry = {
+    value: {
+        type: "list";
+        value: string[];
+    };
     expiresAt: number | null;
 };
 
@@ -25,6 +47,24 @@ export class CacheEngine {
     set(key: string, value: unknown, ttl?: number) {
         this.stats.sets++;
 
+        let redisValue: RedisValue;
+
+        if (typeof value === "string") {
+            redisValue = {
+                type: "string",
+                value
+            };
+        } else if (typeof value === "number") {
+            redisValue = {
+                type: "number",
+                value
+            };
+        } else {
+            throw new Error(
+                "CacheX supports only strings and numbers with SET"
+            );
+        }
+
         const expiresAt =
             ttl !== undefined
                 ? Date.now() + ttl * 1000
@@ -35,7 +75,8 @@ export class CacheEngine {
         }
 
         if (this.store.size >= this.maxKeys) {
-            const oldestKey = this.store.keys().next().value;
+            const oldestKey =
+                this.store.keys().next().value;
 
             if (oldestKey) {
                 this.store.delete(oldestKey);
@@ -44,7 +85,7 @@ export class CacheEngine {
         }
 
         this.store.set(key, {
-            value,
+            value: redisValue,
             expiresAt
         });
     }
@@ -71,7 +112,7 @@ export class CacheEngine {
         this.store.delete(key);
         this.store.set(key, entry);
 
-        return entry.value;
+        return entry.value.value;
     }
 
     delete(key: string) {
@@ -173,7 +214,10 @@ export class CacheEngine {
 
         if (!entry) {
             this.store.set(key, {
-                value: 1,
+                value: {
+                    type: "number",
+                    value: 1
+                },
                 expiresAt: null
             });
 
@@ -184,7 +228,10 @@ export class CacheEngine {
             this.store.delete(key);
 
             this.store.set(key, {
-                value: 1,
+                value: {
+                    type: "number",
+                    value: 1
+                },
                 expiresAt: null
             });
 
@@ -193,13 +240,16 @@ export class CacheEngine {
             return 1;
         }
 
-        if (typeof entry.value !== "number") {
+        if (entry.value.type !== "number") {
             throw new Error("Value is not a number");
         }
 
-        entry.value++;
+        entry.value.value++;
 
-        return entry.value;
+        this.store.delete(key);
+        this.store.set(key, entry);
+
+        return entry.value.value;
     }
 
     decr(key: string) {
@@ -209,7 +259,10 @@ export class CacheEngine {
 
         if (!entry) {
             this.store.set(key, {
-                value: -1,
+                value: {
+                    type: "number",
+                    value: -1
+                },
                 expiresAt: null
             });
 
@@ -220,7 +273,10 @@ export class CacheEngine {
             this.store.delete(key);
 
             this.store.set(key, {
-                value: -1,
+                value: {
+                    type: "number",
+                    value: -1
+                },
                 expiresAt: null
             });
 
@@ -229,13 +285,138 @@ export class CacheEngine {
             return -1;
         }
 
-        if (typeof entry.value !== "number") {
+        if (entry.value.type !== "number") {
             throw new Error("Value is not a number");
         }
 
-        entry.value--;
+        entry.value.value--;
 
-        return entry.value;
+        this.store.delete(key);
+        this.store.set(key, entry);
+
+        return entry.value.value;
+    }
+
+    lpush(key: string, values: string[]) {
+        const entry = this.getListEntry(key);
+
+        if (!entry) {
+            const list = [...values].reverse();
+
+            this.store.set(key, {
+                value: {
+                    type: "list",
+                    value: list
+                },
+                expiresAt: null
+            });
+
+            return list.length;
+        }
+
+        entry.value.value.unshift(...values);
+
+        this.touch(key);
+
+        return entry.value.value.length;
+    }
+
+    rpush(key: string, values: string[]) {
+        const entry = this.getListEntry(key);
+
+        if (!entry) {
+            this.store.set(key, {
+                value: {
+                    type: "list",
+                    value: [...values]
+                },
+                expiresAt: null
+            });
+
+            return values.length;
+        }
+
+        entry.value.value.push(...values);
+
+        this.touch(key);
+
+        return entry.value.value.length;
+    }
+
+    lpop(key: string) {
+        const entry = this.getListEntry(key);
+
+        if (!entry || entry.value.value.length === 0) {
+            return undefined;
+        }
+
+        const value = entry.value.value.shift();
+
+        this.touch(key);
+
+        return value;
+    }
+
+    rpop(key: string) {
+        const entry = this.getListEntry(key);
+
+        if (!entry || entry.value.value.length === 0) {
+            return undefined;
+        }
+
+        const value = entry.value.value.pop();
+
+        this.touch(key);
+
+        return value;
+    }
+
+    lrange(
+        key: string,
+        start: number,
+        stop: number
+    ) {
+        const entry = this.getListEntry(key);
+
+        if (!entry) {
+            return [];
+        }
+
+        const list = entry.value.value;
+
+        if (stop < 0) {
+            stop = list.length + stop;
+        }
+
+        if (start < 0) {
+            start = list.length + start;
+        }
+
+        if (start < 0) {
+            start = 0;
+        }
+
+        if (stop >= list.length) {
+            stop = list.length - 1;
+        }
+
+        if (start > stop || start >= list.length) {
+            return [];
+        }
+
+        this.touch(key);
+
+        return list.slice(start, stop + 1);
+    }
+
+    llen(key: string) {
+        const entry = this.getListEntry(key);
+
+        if (!entry) {
+            return 0;
+        }
+
+        return entry.value.value.length;
     }
 
     cleanupExpired() {
@@ -277,6 +458,37 @@ export class CacheEngine {
                 (Date.now() - this.startedAt) / 1000
             )
         };
+    }
+
+    private getListEntry(key: string): ListCacheEntry | undefined {
+        const entry = this.store.get(key);
+
+        if (!entry) {
+            return undefined;
+        }
+
+        if (this.isExpired(entry)) {
+            this.store.delete(key);
+            this.stats.expirations++;
+            return undefined;
+        }
+
+        if (entry.value.type !== "list") {
+            throw new Error("WRONGTYPE Key is not a list");
+        }
+
+        return entry as ListCacheEntry;
+    }
+
+    private touch(key: string) {
+        const entry = this.store.get(key);
+
+        if (!entry) {
+            return;
+        }
+
+        this.store.delete(key);
+        this.store.set(key, entry);
     }
 
     private isExpired(entry: CacheEntry) {
