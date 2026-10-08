@@ -14,26 +14,14 @@ type RedisValue =
     | {
           type: "set";
           value: Set<string>;
+      }
+    | {
+          type: "hash";
+          value: Map<string, string>;
       };
 
 type CacheEntry = {
     value: RedisValue;
-    expiresAt: number | null;
-};
-
-type ListCacheEntry = {
-    value: {
-        type: "list";
-        value: string[];
-    };
-    expiresAt: number | null;
-};
-
-type SetCacheEntry = {
-    value: {
-        type: "set";
-        value: Set<string>;
-    };
     expiresAt: number | null;
 };
 
@@ -51,7 +39,9 @@ export class CacheEngine {
         increments: 0,
         decrements: 0,
         setAdds: 0,
-        setRemoves: 0
+        setRemoves: 0,
+        hashSets: 0,
+        hashDeletes: 0
     };
 
     private startedAt = Date.now();
@@ -75,7 +65,7 @@ export class CacheEngine {
             };
         } else {
             throw new Error(
-                "CacheX supports only strings and numbers with SET"
+                "SET supports only strings and numbers"
             );
         }
 
@@ -88,15 +78,7 @@ export class CacheEngine {
             this.store.delete(key);
         }
 
-        if (this.store.size >= this.maxKeys) {
-            const oldestKey =
-                this.store.keys().next().value;
-
-            if (oldestKey) {
-                this.store.delete(oldestKey);
-                this.stats.evictions++;
-            }
-        }
+        this.ensureCapacity();
 
         this.store.set(key, {
             value: redisValue,
@@ -118,11 +100,11 @@ export class CacheEngine {
             this.store.delete(key);
             this.stats.misses++;
             this.stats.expirations++;
+
             return undefined;
         }
 
         this.stats.hits++;
-
         this.touch(key);
 
         return entry.value.value;
@@ -148,6 +130,7 @@ export class CacheEngine {
         if (this.isExpired(entry)) {
             this.store.delete(key);
             this.stats.expirations++;
+
             return false;
         }
 
@@ -155,15 +138,15 @@ export class CacheEngine {
     }
 
     keys() {
-        const keys: string[] = [];
+        const result: string[] = [];
 
         for (const key of this.store.keys()) {
             if (this.exists(key)) {
-                keys.push(key);
+                result.push(key);
             }
         }
 
-        return keys;
+        return result;
     }
 
     clear() {
@@ -180,6 +163,7 @@ export class CacheEngine {
         if (this.isExpired(entry)) {
             this.store.delete(key);
             this.stats.expirations++;
+
             return -2;
         }
 
@@ -198,7 +182,14 @@ export class CacheEngine {
     expire(key: string, seconds: number) {
         const entry = this.store.get(key);
 
-        if (!entry || this.isExpired(entry)) {
+        if (!entry) {
+            return false;
+        }
+
+        if (this.isExpired(entry)) {
+            this.store.delete(key);
+            this.stats.expirations++;
+
             return false;
         }
 
@@ -211,7 +202,14 @@ export class CacheEngine {
     persist(key: string) {
         const entry = this.store.get(key);
 
-        if (!entry || this.isExpired(entry)) {
+        if (!entry) {
+            return false;
+        }
+
+        if (this.isExpired(entry)) {
+            this.store.delete(key);
+            this.stats.expirations++;
+
             return false;
         }
 
@@ -223,38 +221,27 @@ export class CacheEngine {
     incr(key: string) {
         this.stats.increments++;
 
-        const entry = this.store.get(key);
+        let entry = this.store.get(key);
 
-        if (!entry) {
-            this.store.set(key, {
-                value: {
-                    type: "number",
-                    value: 1
-                },
-                expiresAt: null
-            });
-
-            return 1;
+        if (entry && this.isExpired(entry)) {
+            this.store.delete(key);
+            this.stats.expirations++;
+            entry = undefined;
         }
 
-        if (this.isExpired(entry)) {
-            this.store.delete(key);
-
-            this.store.set(key, {
-                value: {
-                    type: "number",
-                    value: 1
-                },
-                expiresAt: null
+        if (!entry) {
+            this.createEntry(key, {
+                type: "number",
+                value: 1
             });
-
-            this.stats.expirations++;
 
             return 1;
         }
 
         if (entry.value.type !== "number") {
-            throw new Error("Value is not a number");
+            throw new Error(
+                "WRONGTYPE Key is not a number"
+            );
         }
 
         entry.value.value++;
@@ -267,38 +254,27 @@ export class CacheEngine {
     decr(key: string) {
         this.stats.decrements++;
 
-        const entry = this.store.get(key);
+        let entry = this.store.get(key);
 
-        if (!entry) {
-            this.store.set(key, {
-                value: {
-                    type: "number",
-                    value: -1
-                },
-                expiresAt: null
-            });
-
-            return -1;
+        if (entry && this.isExpired(entry)) {
+            this.store.delete(key);
+            this.stats.expirations++;
+            entry = undefined;
         }
 
-        if (this.isExpired(entry)) {
-            this.store.delete(key);
-
-            this.store.set(key, {
-                value: {
-                    type: "number",
-                    value: -1
-                },
-                expiresAt: null
+        if (!entry) {
+            this.createEntry(key, {
+                type: "number",
+                value: -1
             });
-
-            this.stats.expirations++;
 
             return -1;
         }
 
         if (entry.value.type !== "number") {
-            throw new Error("Value is not a number");
+            throw new Error(
+                "WRONGTYPE Key is not a number"
+            );
         }
 
         entry.value.value--;
@@ -309,20 +285,20 @@ export class CacheEngine {
     }
 
     lpush(key: string, values: string[]) {
-        const entry = this.getListEntry(key);
+        let entry = this.getListEntry(key);
 
         if (!entry) {
-            const list = [...values].reverse();
-
             this.createEntry(key, {
                 type: "list",
-                value: list
+                value: []
             });
 
-            return list.length;
+            entry = this.getListEntry(key)!;
         }
 
-        entry.value.value.unshift(...values);
+        for (const value of values) {
+            entry.value.value.unshift(value);
+        }
 
         this.touch(key);
 
@@ -330,15 +306,15 @@ export class CacheEngine {
     }
 
     rpush(key: string, values: string[]) {
-        const entry = this.getListEntry(key);
+        let entry = this.getListEntry(key);
 
         if (!entry) {
             this.createEntry(key, {
                 type: "list",
-                value: [...values]
+                value: []
             });
 
-            return values.length;
+            entry = this.getListEntry(key)!;
         }
 
         entry.value.value.push(...values);
@@ -351,13 +327,17 @@ export class CacheEngine {
     lpop(key: string) {
         const entry = this.getListEntry(key);
 
-        if (!entry || entry.value.value.length === 0) {
+        if (!entry) {
             return undefined;
         }
 
         const value = entry.value.value.shift();
 
-        this.touch(key);
+        if (entry.value.value.length === 0) {
+            this.store.delete(key);
+        } else {
+            this.touch(key);
+        }
 
         return value;
     }
@@ -365,13 +345,17 @@ export class CacheEngine {
     rpop(key: string) {
         const entry = this.getListEntry(key);
 
-        if (!entry || entry.value.value.length === 0) {
+        if (!entry) {
             return undefined;
         }
 
         const value = entry.value.value.pop();
 
-        this.touch(key);
+        if (entry.value.value.length === 0) {
+            this.store.delete(key);
+        } else {
+            this.touch(key);
+        }
 
         return value;
     }
@@ -388,30 +372,33 @@ export class CacheEngine {
         }
 
         const list = entry.value.value;
+        const length = list.length;
 
-        if (stop < 0) {
-            stop = list.length + stop;
-        }
+        let actualStart =
+            start < 0 ? length + start : start;
 
-        if (start < 0) {
-            start = list.length + start;
-        }
+        let actualStop =
+            stop < 0 ? length + stop : stop;
 
-        if (start < 0) {
-            start = 0;
-        }
+        actualStart = Math.max(0, actualStart);
+        actualStop = Math.min(
+            length - 1,
+            actualStop
+        );
 
-        if (stop >= list.length) {
-            stop = list.length - 1;
-        }
-
-        if (start > stop || start >= list.length) {
+        if (
+            actualStart > actualStop ||
+            actualStart >= length
+        ) {
             return [];
         }
 
         this.touch(key);
 
-        return list.slice(start, stop + 1);
+        return list.slice(
+            actualStart,
+            actualStop + 1
+        );
     }
 
     llen(key: string) {
@@ -430,7 +417,7 @@ export class CacheEngine {
         if (!entry) {
             this.createEntry(key, {
                 type: "set",
-                value: new Set()
+                value: new Set<string>()
             });
 
             entry = this.getSetEntry(key)!;
@@ -469,7 +456,11 @@ export class CacheEngine {
 
         this.stats.setRemoves += removed;
 
-        this.touch(key);
+        if (entry.value.value.size === 0) {
+            this.store.delete(key);
+        } else {
+            this.touch(key);
+        }
 
         return removed;
     }
@@ -491,7 +482,7 @@ export class CacheEngine {
             return [];
         }
 
-        return [...entry.value.value];
+        return Array.from(entry.value.value);
     }
 
     scard(key: string) {
@@ -502,6 +493,154 @@ export class CacheEngine {
         }
 
         return entry.value.value.size;
+    }
+
+    hset(
+        key: string,
+        field: string,
+        value: string
+    ) {
+        let entry = this.getHashEntry(key);
+
+        if (!entry) {
+            this.createEntry(key, {
+                type: "hash",
+                value: new Map<string, string>()
+            });
+
+            entry = this.getHashEntry(key)!;
+        }
+
+        const isNew =
+            !entry.value.value.has(field);
+
+        entry.value.value.set(field, value);
+
+        this.stats.hashSets++;
+
+        this.touch(key);
+
+        return isNew ? 1 : 0;
+    }
+
+    hget(key: string, field: string) {
+        const entry = this.getHashEntry(key);
+
+        if (!entry) {
+            return undefined;
+        }
+
+        const value =
+            entry.value.value.get(field);
+
+        this.touch(key);
+
+        return value;
+    }
+
+    hdel(key: string, fields: string[]) {
+        const entry = this.getHashEntry(key);
+
+        if (!entry) {
+            return 0;
+        }
+
+        let deleted = 0;
+
+        for (const field of fields) {
+            if (entry.value.value.delete(field)) {
+                deleted++;
+            }
+        }
+
+        this.stats.hashDeletes += deleted;
+
+        if (entry.value.value.size === 0) {
+            this.store.delete(key);
+        } else {
+            this.touch(key);
+        }
+
+        return deleted;
+    }
+
+    hexists(key: string, field: string) {
+        const entry = this.getHashEntry(key);
+
+        if (!entry) {
+            return false;
+        }
+
+        return entry.value.value.has(field);
+    }
+
+    hgetall(key: string) {
+        const entry = this.getHashEntry(key);
+
+        if (!entry) {
+            return {};
+        }
+
+        const result: Record<string, string> = {};
+
+        for (const [field, value] of entry.value.value) {
+            result[field] = value;
+        }
+
+        this.touch(key);
+
+        return result;
+    }
+
+    hkeys(key: string) {
+        const entry = this.getHashEntry(key);
+
+        if (!entry) {
+            return [];
+        }
+
+        return Array.from(
+            entry.value.value.keys()
+        );
+    }
+
+    hvals(key: string) {
+        const entry = this.getHashEntry(key);
+
+        if (!entry) {
+            return [];
+        }
+
+        return Array.from(
+            entry.value.value.values()
+        );
+    }
+
+    hlen(key: string) {
+        const entry = this.getHashEntry(key);
+
+        if (!entry) {
+            return 0;
+        }
+
+        return entry.value.value.size;
+    }
+
+    type(key: string) {
+        const entry = this.store.get(key);
+
+        if (!entry) {
+            return "none";
+        }
+
+        if (this.isExpired(entry)) {
+            this.store.delete(key);
+            this.stats.expirations++;
+
+            return "none";
+        }
+
+        return entry.value.type;
     }
 
     cleanupExpired() {
@@ -520,18 +659,24 @@ export class CacheEngine {
 
     getStats() {
         const totalRequests =
-            this.stats.hits + this.stats.misses;
+            this.stats.hits +
+            this.stats.misses;
 
         const hitRate =
             totalRequests === 0
                 ? 0
-                : (this.stats.hits / totalRequests) * 100;
+                : (this.stats.hits /
+                      totalRequests) *
+                  100;
 
         return {
             keys: this.store.size,
+            maxKeys: this.maxKeys,
             hits: this.stats.hits,
             misses: this.stats.misses,
-            hitRate: Number(hitRate.toFixed(2)),
+            hitRate: Number(
+                hitRate.toFixed(2)
+            ),
             sets: this.stats.sets,
             gets: this.stats.gets,
             deletes: this.stats.deletes,
@@ -541,33 +686,81 @@ export class CacheEngine {
             decrements: this.stats.decrements,
             setAdds: this.stats.setAdds,
             setRemoves: this.stats.setRemoves,
+            hashSets: this.stats.hashSets,
+            hashDeletes:
+                this.stats.hashDeletes,
             uptime: Math.floor(
-                (Date.now() - this.startedAt) / 1000
+                (Date.now() -
+                    this.startedAt) /
+                    1000
             )
         };
     }
 
-    private getListEntry(key: string): ListCacheEntry | undefined {
-        const entry = this.store.get(key);
+    private getListEntry(key: string) {
+        const entry = this.getValidEntry(key);
 
         if (!entry) {
-            return undefined;
-        }
-
-        if (this.isExpired(entry)) {
-            this.store.delete(key);
-            this.stats.expirations++;
             return undefined;
         }
 
         if (entry.value.type !== "list") {
-            throw new Error("WRONGTYPE Key is not a list");
+            throw new Error(
+                "WRONGTYPE Key is not a list"
+            );
         }
 
-        return entry as ListCacheEntry;
+        return entry as CacheEntry & {
+            value: Extract<
+                RedisValue,
+                { type: "list" }
+            >;
+        };
     }
 
-    private getSetEntry(key: string): SetCacheEntry | undefined {
+    private getSetEntry(key: string) {
+        const entry = this.getValidEntry(key);
+
+        if (!entry) {
+            return undefined;
+        }
+
+        if (entry.value.type !== "set") {
+            throw new Error(
+                "WRONGTYPE Key is not a set"
+            );
+        }
+
+        return entry as CacheEntry & {
+            value: Extract<
+                RedisValue,
+                { type: "set" }
+            >;
+        };
+    }
+
+    private getHashEntry(key: string) {
+        const entry = this.getValidEntry(key);
+
+        if (!entry) {
+            return undefined;
+        }
+
+        if (entry.value.type !== "hash") {
+            throw new Error(
+                "WRONGTYPE Key is not a hash"
+            );
+        }
+
+        return entry as CacheEntry & {
+            value: Extract<
+                RedisValue,
+                { type: "hash" }
+            >;
+        };
+    }
+
+    private getValidEntry(key: string) {
         const entry = this.store.get(key);
 
         if (!entry) {
@@ -577,34 +770,37 @@ export class CacheEngine {
         if (this.isExpired(entry)) {
             this.store.delete(key);
             this.stats.expirations++;
+
             return undefined;
         }
 
-        if (entry.value.type !== "set") {
-            throw new Error("WRONGTYPE Key is not a set");
-        }
-
-        return entry as SetCacheEntry;
+        return entry;
     }
 
     private createEntry(
         key: string,
         value: RedisValue
     ) {
-        if (this.store.size >= this.maxKeys) {
-            const oldestKey =
-                this.store.keys().next().value;
-
-            if (oldestKey) {
-                this.store.delete(oldestKey);
-                this.stats.evictions++;
-            }
-        }
+        this.ensureCapacity();
 
         this.store.set(key, {
             value,
             expiresAt: null
         });
+    }
+
+    private ensureCapacity() {
+        if (this.store.size < this.maxKeys) {
+            return;
+        }
+
+        const oldestKey =
+            this.store.keys().next().value;
+
+        if (oldestKey !== undefined) {
+            this.store.delete(oldestKey);
+            this.stats.evictions++;
+        }
     }
 
     private touch(key: string) {

@@ -8,6 +8,18 @@ const PORT = 3000;
 
 app.use(express.json());
 
+const handleError = (
+    error: unknown,
+    res: express.Response
+) => {
+    res.status(400).json({
+        error:
+            error instanceof Error
+                ? error.message
+                : "Unknown error"
+    });
+};
+
 app.get("/", (_req, res) => {
     res.json({
         name: "CacheX",
@@ -24,28 +36,14 @@ app.post("/set", (req, res) => {
         });
     }
 
-    if (
-        ttl !== undefined &&
-        (typeof ttl !== "number" || ttl <= 0)
-    ) {
-        return res.status(400).json({
-            error: "ttl must be a positive number"
-        });
-    }
-
     try {
         cache.set(key, value, ttl);
 
         res.json({
-            message: "OK",
-            key,
-            value,
-            ttl: ttl ?? null
+            message: "OK"
         });
     } catch (error) {
-        res.status(400).json({
-            error: (error as Error).message
-        });
+        handleError(error, res);
     }
 });
 
@@ -65,10 +63,8 @@ app.get("/get/:key", (req, res) => {
 });
 
 app.delete("/delete/:key", (req, res) => {
-    const deleted = cache.delete(req.params.key);
-
     res.json({
-        deleted
+        deleted: cache.delete(req.params.key)
     });
 });
 
@@ -92,12 +88,17 @@ app.delete("/clear", (_req, res) => {
     });
 });
 
-app.get("/ttl/:key", (req, res) => {
-    const ttl = cache.ttl(req.params.key);
-
+app.get("/type/:key", (req, res) => {
     res.json({
         key: req.params.key,
-        ttl
+        type: cache.type(req.params.key)
+    });
+});
+
+app.get("/ttl/:key", (req, res) => {
+    res.json({
+        key: req.params.key,
+        ttl: cache.ttl(req.params.key)
     });
 });
 
@@ -109,7 +110,8 @@ app.post("/expire/:key", (req, res) => {
         seconds <= 0
     ) {
         return res.status(400).json({
-            error: "seconds must be a positive number"
+            error:
+                "seconds must be a positive number"
         });
     }
 
@@ -118,58 +120,34 @@ app.post("/expire/:key", (req, res) => {
         seconds
     );
 
-    if (!success) {
-        return res.status(404).json({
-            error: "Key not found"
-        });
-    }
-
     res.json({
-        success: true
+        success
     });
 });
 
 app.post("/persist/:key", (req, res) => {
-    const success = cache.persist(req.params.key);
-
-    if (!success) {
-        return res.status(404).json({
-            error: "Key not found"
-        });
-    }
-
     res.json({
-        success: true
+        success: cache.persist(req.params.key)
     });
 });
 
 app.post("/incr/:key", (req, res) => {
     try {
-        const value = cache.incr(req.params.key);
-
         res.json({
-            key: req.params.key,
-            value
+            value: cache.incr(req.params.key)
         });
     } catch (error) {
-        res.status(400).json({
-            error: (error as Error).message
-        });
+        handleError(error, res);
     }
 });
 
 app.post("/decr/:key", (req, res) => {
     try {
-        const value = cache.decr(req.params.key);
-
         res.json({
-            key: req.params.key,
-            value
+            value: cache.decr(req.params.key)
         });
     } catch (error) {
-        res.status(400).json({
-            error: (error as Error).message
-        });
+        handleError(error, res);
     }
 });
 
@@ -178,27 +156,25 @@ app.post("/lpush/:key", (req, res) => {
 
     if (
         !Array.isArray(values) ||
-        values.some(value => typeof value !== "string")
+        values.some(
+            value => typeof value !== "string"
+        )
     ) {
         return res.status(400).json({
-            error: "values must be an array of strings"
+            error:
+                "values must be an array of strings"
         });
     }
 
     try {
-        const length = cache.lpush(
-            req.params.key,
-            values
-        );
-
         res.json({
-            key: req.params.key,
-            length
+            length: cache.lpush(
+                req.params.key,
+                values
+            )
         });
     } catch (error) {
-        res.status(400).json({
-            error: (error as Error).message
-        });
+        handleError(error, res);
     }
 });
 
@@ -207,67 +183,49 @@ app.post("/rpush/:key", (req, res) => {
 
     if (
         !Array.isArray(values) ||
-        values.some(value => typeof value !== "string")
+        values.some(
+            value => typeof value !== "string"
+        )
     ) {
         return res.status(400).json({
-            error: "values must be an array of strings"
+            error:
+                "values must be an array of strings"
         });
     }
 
     try {
-        const length = cache.rpush(
-            req.params.key,
-            values
-        );
-
         res.json({
-            key: req.params.key,
-            length
+            length: cache.rpush(
+                req.params.key,
+                values
+            )
         });
     } catch (error) {
-        res.status(400).json({
-            error: (error as Error).message
-        });
+        handleError(error, res);
     }
 });
 
 app.post("/lpop/:key", (req, res) => {
     try {
-        const value = cache.lpop(req.params.key);
-
-        if (value === undefined) {
-            return res.status(404).json({
-                error: "List is empty or key not found"
-            });
-        }
-
         res.json({
-            value
+            value:
+                cache.lpop(req.params.key) ??
+                null
         });
     } catch (error) {
-        res.status(400).json({
-            error: (error as Error).message
-        });
+        handleError(error, res);
     }
 });
 
 app.post("/rpop/:key", (req, res) => {
     try {
-        const value = cache.rpop(req.params.key);
-
-        if (value === undefined) {
-            return res.status(404).json({
-                error: "List is empty or key not found"
-            });
-        }
-
         res.json({
-            value
+            value:
+                cache.rpop(req.params.key) ??
+                null
         });
     } catch (error) {
-        res.status(400).json({
-            error: (error as Error).message
-        });
+        handleError(error, res);
     }
 });
 
@@ -280,38 +238,31 @@ app.get("/lrange/:key", (req, res) => {
         !Number.isInteger(stop)
     ) {
         return res.status(400).json({
-            error: "start and stop must be integers"
+            error:
+                "start and stop must be integers"
         });
     }
 
     try {
-        const values = cache.lrange(
-            req.params.key,
-            start,
-            stop
-        );
-
         res.json({
-            values
+            values: cache.lrange(
+                req.params.key,
+                start,
+                stop
+            )
         });
     } catch (error) {
-        res.status(400).json({
-            error: (error as Error).message
-        });
+        handleError(error, res);
     }
 });
 
 app.get("/llen/:key", (req, res) => {
     try {
-        const length = cache.llen(req.params.key);
-
         res.json({
-            length
+            length: cache.llen(req.params.key)
         });
     } catch (error) {
-        res.status(400).json({
-            error: (error as Error).message
-        });
+        handleError(error, res);
     }
 });
 
@@ -320,102 +271,212 @@ app.post("/sadd/:key", (req, res) => {
 
     if (
         !Array.isArray(members) ||
-        members.some(member => typeof member !== "string")
+        members.some(
+            member => typeof member !== "string"
+        )
     ) {
         return res.status(400).json({
-            error: "members must be an array of strings"
+            error:
+                "members must be an array of strings"
         });
     }
 
     try {
-        const added = cache.sadd(
-            req.params.key,
-            members
-        );
-
         res.json({
-            key: req.params.key,
-            added
+            added: cache.sadd(
+                req.params.key,
+                members
+            )
         });
     } catch (error) {
-        res.status(400).json({
-            error: (error as Error).message
-        });
+        handleError(error, res);
     }
 });
 
 app.post("/srem/:key", (req, res) => {
     const { members } = req.body;
 
-    if (
-        !Array.isArray(members) ||
-        members.some(member => typeof member !== "string")
-    ) {
+    if (!Array.isArray(members)) {
         return res.status(400).json({
-            error: "members must be an array of strings"
+            error: "members must be an array"
         });
     }
 
     try {
-        const removed = cache.srem(
-            req.params.key,
-            members
-        );
-
         res.json({
-            key: req.params.key,
-            removed
+            removed: cache.srem(
+                req.params.key,
+                members
+            )
         });
     } catch (error) {
-        res.status(400).json({
-            error: (error as Error).message
-        });
+        handleError(error, res);
     }
 });
 
-app.get("/sismember/:key/:member", (req, res) => {
-    try {
-        const exists = cache.sismember(
-            req.params.key,
-            req.params.member
-        );
-
-        res.json({
-            member: req.params.member,
-            exists
-        });
-    } catch (error) {
-        res.status(400).json({
-            error: (error as Error).message
-        });
+app.get(
+    "/sismember/:key/:member",
+    (req, res) => {
+        try {
+            res.json({
+                exists: cache.sismember(
+                    req.params.key,
+                    req.params.member
+                )
+            });
+        } catch (error) {
+            handleError(error, res);
+        }
     }
-});
+);
 
 app.get("/smembers/:key", (req, res) => {
     try {
-        const members = cache.smembers(req.params.key);
-
         res.json({
-            members
+            members: cache.smembers(
+                req.params.key
+            )
         });
     } catch (error) {
-        res.status(400).json({
-            error: (error as Error).message
-        });
+        handleError(error, res);
     }
 });
 
 app.get("/scard/:key", (req, res) => {
     try {
-        const size = cache.scard(req.params.key);
-
         res.json({
-            size
+            size: cache.scard(req.params.key)
         });
     } catch (error) {
-        res.status(400).json({
-            error: (error as Error).message
+        handleError(error, res);
+    }
+});
+
+app.post("/hset/:key", (req, res) => {
+    const { field, value } = req.body;
+
+    if (
+        typeof field !== "string" ||
+        typeof value !== "string"
+    ) {
+        return res.status(400).json({
+            error:
+                "field and value must be strings"
         });
+    }
+
+    try {
+        res.json({
+            added: cache.hset(
+                req.params.key,
+                field,
+                value
+            )
+        });
+    } catch (error) {
+        handleError(error, res);
+    }
+});
+
+app.get("/hget/:key/:field", (req, res) => {
+    try {
+        const value = cache.hget(
+            req.params.key,
+            req.params.field
+        );
+
+        res.json({
+            value: value ?? null
+        });
+    } catch (error) {
+        handleError(error, res);
+    }
+});
+
+app.post("/hdel/:key", (req, res) => {
+    const { fields } = req.body;
+
+    if (
+        !Array.isArray(fields) ||
+        fields.some(
+            field => typeof field !== "string"
+        )
+    ) {
+        return res.status(400).json({
+            error:
+                "fields must be an array of strings"
+        });
+    }
+
+    try {
+        res.json({
+            deleted: cache.hdel(
+                req.params.key,
+                fields
+            )
+        });
+    } catch (error) {
+        handleError(error, res);
+    }
+});
+
+app.get(
+    "/hexists/:key/:field",
+    (req, res) => {
+        try {
+            res.json({
+                exists: cache.hexists(
+                    req.params.key,
+                    req.params.field
+                )
+            });
+        } catch (error) {
+            handleError(error, res);
+        }
+    }
+);
+
+app.get("/hgetall/:key", (req, res) => {
+    try {
+        res.json({
+            fields: cache.hgetall(
+                req.params.key
+            )
+        });
+    } catch (error) {
+        handleError(error, res);
+    }
+});
+
+app.get("/hkeys/:key", (req, res) => {
+    try {
+        res.json({
+            fields: cache.hkeys(req.params.key)
+        });
+    } catch (error) {
+        handleError(error, res);
+    }
+});
+
+app.get("/hvals/:key", (req, res) => {
+    try {
+        res.json({
+            values: cache.hvals(
+                req.params.key
+            )
+        });
+    } catch (error) {
+        handleError(error, res);
+    }
+});
+
+app.get("/hlen/:key", (req, res) => {
+    try {
+        res.json({
+            length: cache.hlen(req.params.key)
+        });
+    } catch (error) {
+        handleError(error, res);
     }
 });
 
@@ -434,9 +495,9 @@ const expirationWorker = setInterval(() => {
 }, 1000);
 
 const shutdown = () => {
-    console.log("\nShutting down CacheX...");
-
     clearInterval(expirationWorker);
+
+    console.log("CacheX shutting down");
 
     process.exit(0);
 };
